@@ -27,20 +27,19 @@ pub fn router(state: Arc<AppState>) -> Router {
 async fn capture_and_send(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<OcrResponse>, ApiError> {
-    let frame = tokio::task::spawn_blocking(capture::capture_focused_window)
+    let frame = tokio::task::spawn_blocking(capture::capture_full_screen)
         .await
         .map_err(|error| ApiError::internal(format!("capture task failed: {error}")))?
         .map_err(|error| ApiError::internal(error.to_string()))?;
 
     info!(
-        app = %frame.app_name,
-        title = %frame.window_title,
+        monitor = %frame.monitor_name,
         width = frame.width,
         height = frame.height,
         bytes = frame.bytes.len(),
         sha256 = %frame.sha256,
         receiver = %state.config.server.url,
-        "captured focused window; sending to receiver"
+        "captured full screen; sending to receiver"
     );
 
     let response = state

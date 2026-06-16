@@ -1,15 +1,13 @@
-# Screen OCR focused-window trigger
+# Screen OCR full-screen trigger
 
-Minimal Rust workspace with two programs:
+Minimal Rust workspace with two services:
 
-- `screen-ocr-sender`: runs a local HTTP trigger. Every `POST /capture` captures the currently focused, non-minimized window and sends the PNG to the receiver.
-- `screen-ocr-receiver`: accepts the PNG, runs Tesseract OCR, and returns JSON.
+- `screen-ocr-receiver`: receives an image and runs Tesseract OCR.
+- `screen-ocr-sender`: listens locally for `POST /capture`, captures the complete primary monitor, and forwards the PNG to the receiver.
 
-The sender intentionally has no monitor selection, region mode, polling loop, or watch mode.
+The sender intentionally has no watch mode, focused-window logic, region capture, or monitor-selection CLI.
 
 ## Sender configuration
-
-Edit `config.sender.toml`:
 
 ```toml
 [trigger]
@@ -24,87 +22,67 @@ timeout_secs = 30
 device_id = "dwl-desktop"
 ```
 
-The trigger is bound to loopback only. The receiver can be on another machine in the LAN.
-
-## Build
+## Run
 
 ```bash
-nix develop
-cargo build --release
+cargo run --release -p screen-ocr-sender -- --config config.sender.toml
 ```
 
-## Start receiver
-
-On the OCR machine:
+Trigger a capture:
 
 ```bash
-./target/release/screen-ocr-receiver --config config.receiver.toml
+curl -sS -X POST http://127.0.0.1:4490/capture | jq
 ```
 
-## Start sender
-
-Inside the graphical `dwl` session:
+During debugging, do not use `curl -f`, because `-f` hides the JSON error body returned by the sender. To print both status and body:
 
 ```bash
-./target/release/screen-ocr-sender --config config.sender.toml
+curl -sS -X POST \
+  -w '\nHTTP %{http_code}\n' \
+  http://127.0.0.1:4490/capture
 ```
-
-It must inherit the graphical-session environment, especially `WAYLAND_DISPLAY`, `XDG_RUNTIME_DIR`, and the PipeWire/portal session variables.
-
-## Trigger manually
-
-```bash
-curl -fsS -X POST http://127.0.0.1:4490/capture | jq
-```
-
-The shell command does not create a graphical window, so the application that was already focused remains the focused capture target.
 
 ## dwl key binding
 
-In `config.h`, add a command near the other command arrays:
+Add near the command declarations in `config.h`:
 
 ```c
 static const char *ocrcmd[] = {
     "sh", "-c",
-    "curl -fsS -X POST http://127.0.0.1:4490/capture "
-    ">/tmp/screen-ocr-last.json 2>/tmp/screen-ocr-last.err",
+    "curl -sS -X POST http://127.0.0.1:4490/capture "
+    ">/tmp/screen-ocr-last.json "
+    "2>/tmp/screen-ocr-last.err",
     NULL
 };
 ```
 
-Then add a key inside `static const Key keys[]`:
+Add to `static const Key keys[]`:
 
 ```c
 { MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_o, spawn, {.v = ocrcmd} },
 ```
 
-This example binds `Mod+Shift+O`.
-
-Rebuild and reinstall dwl using the same method you normally use, for example:
+Rebuild and restart `dwl`:
 
 ```bash
 make clean
 sudo make install
 ```
 
-Then restart the compositor session.
-
-If your dwl tree uses the `SHCMD` helper, the equivalent key is:
-
-```c
-{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_o, spawn,
-  SHCMD("curl -fsS -X POST http://127.0.0.1:4490/capture >/tmp/screen-ocr-last.json 2>/tmp/screen-ocr-last.err") },
-```
-
-Use only one of the two forms.
-
-## Inspect the last result
-
-```bash
-jq . /tmp/screen-ocr-last.json
-cat /tmp/screen-ocr-last.err
-```
+The binding is `Mod + Shift + O`.
 
 ## Wayland note
 
-The focused-window lookup and capture use XCap's `Window::all`, `Window::is_focused`, and `Window::capture_image` APIs. XCap marks Wayland window capture as available but not fully supported in every scenario. On a `dwl` setup, the sender must be launched from the same user and graphical session. Depending on the installed portal/PipeWire stack, the compositor may display a permission dialog or reject window capture.
+Run the sender in the same user session as `dwl`, preserving at least:
+
+```text
+WAYLAND_DISPLAY
+XDG_RUNTIME_DIR
+DBUS_SESSION_BUS_ADDRESS
+```
+
+If capture still fails, call the endpoint without `-f` and inspect the JSON error body, plus start the sender with:
+
+```bash
+RUST_LOG=debug ./target/release/screen-ocr-sender --config config.sender.toml
+```

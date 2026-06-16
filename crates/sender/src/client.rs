@@ -36,7 +36,7 @@ impl OcrClient {
             .body(frame.bytes)
             .send()
             .await
-            .context("failed to send focused-window screenshot to OCR receiver")?;
+            .context("failed to send full-screen screenshot to OCR receiver")?;
 
         let status = response.status();
         let body = response

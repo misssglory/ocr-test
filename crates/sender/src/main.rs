@@ -15,7 +15,7 @@ use crate::{client::OcrClient, config::SenderConfig, server::AppState};
 
 #[derive(Debug, Parser)]
 #[command(name = "screen-ocr-sender")]
-#[command(about = "Expose a local trigger that captures the focused window and sends it to OCR")]
+#[command(about = "Expose a local trigger that captures the full primary screen and sends it to OCR")]
 struct Cli {
     #[arg(long, default_value = "config.sender.toml")]
     config: PathBuf,
