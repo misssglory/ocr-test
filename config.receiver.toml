@@ -1,0 +1,17 @@
+[server]
+bind = "0.0.0.0:4489"
+token = "dev-secret-change-me"
+max_upload_mb = 20
+
+[ocr]
+command = "tesseract"
+# Use "eng+rus" after installing the Russian traineddata package.
+languages = "eng"
+psm = 6
+oem = 1
+timeout_secs = 30
+
+[storage]
+save_images = true
+save_text = true
+directory = "./received"
