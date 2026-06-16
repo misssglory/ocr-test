@@ -1,6 +1,7 @@
 mod capture;
 mod client;
 mod config;
+mod ocr;
 mod server;
 
 use std::{path::PathBuf, sync::Arc};
@@ -11,11 +12,11 @@ use tokio::net::TcpListener;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
-use crate::{client::OcrClient, config::SenderConfig, server::AppState};
+use crate::{client::TextClient, config::SenderConfig, server::AppState};
 
 #[derive(Debug, Parser)]
 #[command(name = "screen-ocr-sender")]
-#[command(about = "Expose a local trigger that captures the full primary screen and sends it to OCR")]
+#[command(about = "Capture the full screen, run local Tesseract OCR, and send only text")]
 struct Cli {
     #[arg(long, default_value = "config.sender.toml")]
     config: PathBuf,
@@ -27,7 +28,7 @@ async fn main() -> Result<()> {
 
     let cli = Cli::parse();
     let config = SenderConfig::load(&cli.config)?;
-    let client = OcrClient::new(config.clone())?;
+    let client = TextClient::new(config.clone())?;
     let bind = config.trigger.bind.clone();
 
     let state = Arc::new(AppState { config, client });

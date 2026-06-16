@@ -1,5 +1,4 @@
 mod config;
-mod ocr;
 mod server;
 mod storage;
 
@@ -11,14 +10,11 @@ use tokio::net::TcpListener;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
-use crate::{
-    config::ReceiverConfig,
-    server::{AppState, router},
-};
+use crate::{config::ReceiverConfig, server::AppState};
 
 #[derive(Debug, Parser)]
 #[command(name = "screen-ocr-receiver")]
-#[command(about = "Receive screenshots and run Tesseract OCR")]
+#[command(about = "Receive OCR text produced by a remote sender")]
 struct Cli {
     #[arg(long, default_value = "config.receiver.toml")]
     config: PathBuf,
@@ -27,16 +23,17 @@ struct Cli {
 #[tokio::main]
 async fn main() -> Result<()> {
     init_tracing();
+
     let cli = Cli::parse();
     let config = ReceiverConfig::load(&cli.config)?;
-    let listener = TcpListener::bind(&config.server.bind)
+    let bind = config.server.bind.clone();
+    let listener = TcpListener::bind(&bind)
         .await
-        .with_context(|| format!("failed to bind receiver to {}", config.server.bind))?;
+        .with_context(|| format!("failed to bind receiver to {bind}"))?;
 
-    info!(bind = %config.server.bind, "OCR receiver is listening");
+    info!(%bind, "text receiver is listening");
 
-    let state = Arc::new(AppState { config });
-    axum::serve(listener, router(state))
+    axum::serve(listener, server::router(Arc::new(AppState { config })))
         .with_graceful_shutdown(shutdown_signal())
         .await
         .context("receiver server failed")?;
@@ -45,8 +42,9 @@ async fn main() -> Result<()> {
 }
 
 async fn shutdown_signal() {
-    let _ = tokio::signal::ctrl_c().await;
-    info!("stopping receiver");
+    if let Err(error) = tokio::signal::ctrl_c().await {
+        tracing::error!(%error, "failed to install Ctrl-C handler");
+    }
 }
 
 fn init_tracing() {

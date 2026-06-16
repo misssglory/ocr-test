@@ -1,12 +1,17 @@
 [trigger]
-# Keep this on loopback. dwl/curl on the same machine will call it.
 bind = "127.0.0.1:4490"
 
 [server]
-# OCR receiver address on the safe local network.
 url = "http://192.168.1.33:4489"
 token = "dev-secret-change-me"
 timeout_secs = 30
 
 [capture]
 device_id = "dwl-desktop"
+
+[ocr]
+command = "tesseract"
+languages = "eng"
+psm = 6
+oem = 1
+timeout_secs = 30

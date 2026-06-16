@@ -9,7 +9,6 @@ license.workspace = true
 screen-ocr-common = { path = "../common" }
 anyhow.workspace = true
 axum.workspace = true
-bytes.workspace = true
 clap.workspace = true
 figment.workspace = true
 serde.workspace = true

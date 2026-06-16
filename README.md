@@ -1,50 +1,65 @@
-# Screen OCR full-screen trigger
+# Screen OCR bridge — client-side Tesseract
 
-Minimal Rust workspace with two services:
+The sender captures the full primary monitor, runs Tesseract locally, and sends only recognized UTF-8 text as JSON to the receiver.
 
-- `screen-ocr-receiver`: receives an image and runs Tesseract OCR.
-- `screen-ocr-sender`: listens locally for `POST /capture`, captures the complete primary monitor, and forwards the PNG to the receiver.
+## Flow
 
-The sender intentionally has no watch mode, focused-window logic, region capture, or monitor-selection CLI.
+`POST sender:4490/capture -> screenshot -> local Tesseract -> POST receiver:4489/v1/text`
 
-## Sender configuration
+## Sender requirements
 
-```toml
-[trigger]
-bind = "127.0.0.1:4490"
+Install Tesseract and the desired language data. For English and Russian on NixOS, add the relevant Tesseract language packages or use a Tesseract package containing those traineddata files.
 
-[server]
-url = "http://192.168.1.33:4489"
-token = "dev-secret-change-me"
-timeout_secs = 30
-
-[capture]
-device_id = "dwl-desktop"
-```
-
-## Run
+Verify:
 
 ```bash
-cargo run --release -p screen-ocr-sender -- --config config.sender.toml
+tesseract --version
+tesseract --list-langs
 ```
 
-Trigger a capture:
+## Build
+
+```bash
+nix develop
+cargo build --release
+```
+
+## Run receiver
+
+```bash
+./target/release/screen-ocr-receiver --config config.receiver.toml
+```
+
+Check it:
+
+```bash
+curl http://127.0.0.1:4489/healthz
+```
+
+## Run sender
+
+Edit `config.sender.toml` and set the receiver IP, then:
+
+```bash
+./target/release/screen-ocr-sender --config config.sender.toml
+```
+
+Trigger capture:
 
 ```bash
 curl -sS -X POST http://127.0.0.1:4490/capture | jq
 ```
 
-During debugging, do not use `curl -f`, because `-f` hides the JSON error body returned by the sender. To print both status and body:
+For Russian and English:
 
-```bash
-curl -sS -X POST \
-  -w '\nHTTP %{http_code}\n' \
-  http://127.0.0.1:4490/capture
+```toml
+[ocr]
+languages = "eng+rus"
 ```
 
-## dwl key binding
+## dwl binding
 
-Add near the command declarations in `config.h`:
+In `config.h`:
 
 ```c
 static const char *ocrcmd[] = {
@@ -56,33 +71,27 @@ static const char *ocrcmd[] = {
 };
 ```
 
-Add to `static const Key keys[]`:
+Add to `keys[]`:
 
 ```c
 { MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_o, spawn, {.v = ocrcmd} },
 ```
 
-Rebuild and restart `dwl`:
+Then rebuild and restart dwl.
+
+## Direct receiver test
 
 ```bash
-make clean
-sudo make install
-```
-
-The binding is `Mod + Shift + O`.
-
-## Wayland note
-
-Run the sender in the same user session as `dwl`, preserving at least:
-
-```text
-WAYLAND_DISPLAY
-XDG_RUNTIME_DIR
-DBUS_SESSION_BUS_ADDRESS
-```
-
-If capture still fails, call the endpoint without `-f` and inspect the JSON error body, plus start the sender with:
-
-```bash
-RUST_LOG=debug ./target/release/screen-ocr-sender --config config.sender.toml
+curl -sS -X POST http://RECEIVER_IP:4489/v1/text \
+  -H 'Authorization: Bearer dev-secret-change-me' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "device_id":"test",
+    "text":"hello",
+    "image_sha256":"manual-test",
+    "monitor_name":"manual",
+    "width":0,
+    "height":0,
+    "local_ocr_ms":0
+  }' | jq
 ```
