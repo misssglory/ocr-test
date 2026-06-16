@@ -1,22 +1,12 @@
+[trigger]
+# Keep this on loopback. dwl/curl on the same machine will call it.
+bind = "127.0.0.1:4490"
+
 [server]
-# Replace with the receiver device's LAN/VPN address.
+# OCR receiver address on the safe local network.
 url = "http://192.168.1.33:4489"
 token = "dev-secret-change-me"
 timeout_secs = 30
 
 [capture]
-device_id = "desktop-one"
-# Set an explicit index after running `list-monitors`, or omit it to prefer the primary display.
-# monitor_index = 0
-prefer_primary = true
-format = "png"
-jpeg_quality = 90
-interval_ms = 1000
-send_unchanged = false
-
-# Optional crop, relative to the selected monitor.
-# [capture.region]
-# x = 100
-# y = 100
-# width = 1200
-# height = 800
+device_id = "dwl-desktop"

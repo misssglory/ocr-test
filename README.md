@@ -1,184 +1,110 @@
-# Screen OCR Bridge
+# Screen OCR focused-window trigger
 
-A small Rust workspace with two binaries:
+Minimal Rust workspace with two programs:
 
-- `screen-ocr-sender`: captures a monitor or configured region and sends PNG/JPEG bytes.
-- `screen-ocr-receiver`: receives the image, runs Tesseract immediately, optionally stores the image/text, and returns OCR output as JSON.
+- `screen-ocr-sender`: runs a local HTTP trigger. Every `POST /capture` captures the currently focused, non-minimized window and sends the PNG to the receiver.
+- `screen-ocr-receiver`: accepts the PNG, runs Tesseract OCR, and returns JSON.
 
-## Data flow
+The sender intentionally has no monitor selection, region mode, polling loop, or watch mode.
 
-```text
-Device A                                      Device B
-screen capture -> PNG/JPEG -> HTTP POST ---> receiver -> Tesseract OCR
-                    <--- JSON OCR result <---
-```
+## Sender configuration
 
-The transport is intentionally plain HTTP for simple LAN/VPN use. Screenshots may contain secrets, so do not expose port `4489` directly to the public internet. Use a trusted LAN, WireGuard/Tailscale, or put the receiver behind an HTTPS reverse proxy.
-
-## Requirements
-
-### Receiver
-
-- Rust 1.85+
-- Tesseract 5 available as `tesseract`
-- The traineddata files for every language configured in `config.receiver.toml`
-
-Check installed OCR languages:
-
-```bash
-tesseract --list-langs
-```
-
-### Sender on Linux
-
-XCap needs the native X11/Wayland/PipeWire development libraries. The included `flake.nix` provides a development shell for NixOS/Linux.
-
-```bash
-nix develop
-```
-
-On Debian/Ubuntu, XCap documents these build dependencies:
-
-```bash
-sudo apt-get install pkg-config libclang-dev libxcb1-dev libxrandr-dev \
-  libdbus-1-dev libpipewire-0.3-dev libwayland-dev libegl-dev
-```
-
-Install Tesseract on the receiver, for example:
-
-```bash
-sudo apt-get install tesseract-ocr tesseract-ocr-eng tesseract-ocr-rus
-```
-
-## Configure
-
-Use the same long random token on both devices.
-
-Receiver, `config.receiver.toml`:
+Edit `config.sender.toml`:
 
 ```toml
-[server]
-bind = "0.0.0.0:4489"
-token = "replace-with-a-long-random-token"
-max_upload_mb = 20
+[trigger]
+bind = "127.0.0.1:4490"
 
-[ocr]
-command = "tesseract"
-languages = "eng+rus"
-psm = 6
-oem = 1
-timeout_secs = 30
-
-[storage]
-save_images = true
-save_text = true
-directory = "./received"
-```
-
-Sender, `config.sender.toml`:
-
-```toml
 [server]
 url = "http://192.168.1.33:4489"
-token = "replace-with-a-long-random-token"
+token = "dev-secret-change-me"
 timeout_secs = 30
 
 [capture]
-device_id = "desktop-one"
-prefer_primary = true
-format = "png"
-jpeg_quality = 90
-interval_ms = 1000
-send_unchanged = false
+device_id = "dwl-desktop"
 ```
 
-For a crop, add:
+The trigger is bound to loopback only. The receiver can be on another machine in the LAN.
 
-```toml
-[capture.region]
-x = 100
-y = 100
-width = 1200
-height = 800
-```
-
-## Run
-
-Start the receiver on Device B:
+## Build
 
 ```bash
-cargo run --release -p screen-ocr-receiver -- --config config.receiver.toml
+nix develop
+cargo build --release
 ```
 
-List monitors on Device A:
+## Start receiver
+
+On the OCR machine:
 
 ```bash
-cargo run --release -p screen-ocr-sender -- \
-  --config config.sender.toml list-monitors
+./target/release/screen-ocr-receiver --config config.receiver.toml
 ```
 
-Capture once:
+## Start sender
+
+Inside the graphical `dwl` session:
 
 ```bash
-cargo run --release -p screen-ocr-sender -- \
-  --config config.sender.toml once
+./target/release/screen-ocr-sender --config config.sender.toml
 ```
 
-Watch continuously and OCR only changed frames:
+It must inherit the graphical-session environment, especially `WAYLAND_DISPLAY`, `XDG_RUNTIME_DIR`, and the PipeWire/portal session variables.
+
+## Trigger manually
 
 ```bash
-cargo run --release -p screen-ocr-sender -- \
-  --config config.sender.toml watch
+curl -fsS -X POST http://127.0.0.1:4490/capture | jq
 ```
 
-Set `send_unchanged = true` to send every interval even when the encoded screenshot hash is unchanged.
+The shell command does not create a graphical window, so the application that was already focused remains the focused capture target.
 
-## Receiver API
+## dwl key binding
 
-### Health
+In `config.h`, add a command near the other command arrays:
+
+```c
+static const char *ocrcmd[] = {
+    "sh", "-c",
+    "curl -fsS -X POST http://127.0.0.1:4490/capture "
+    ">/tmp/screen-ocr-last.json 2>/tmp/screen-ocr-last.err",
+    NULL
+};
+```
+
+Then add a key inside `static const Key keys[]`:
+
+```c
+{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_o, spawn, {.v = ocrcmd} },
+```
+
+This example binds `Mod+Shift+O`.
+
+Rebuild and reinstall dwl using the same method you normally use, for example:
 
 ```bash
-curl http://127.0.0.1:4489/healthz
+make clean
+sudo make install
 ```
 
-### OCR image upload
+Then restart the compositor session.
+
+If your dwl tree uses the `SHCMD` helper, the equivalent key is:
+
+```c
+{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_o, spawn,
+  SHCMD("curl -fsS -X POST http://127.0.0.1:4490/capture >/tmp/screen-ocr-last.json 2>/tmp/screen-ocr-last.err") },
+```
+
+Use only one of the two forms.
+
+## Inspect the last result
 
 ```bash
-curl -X POST http://127.0.0.1:4489/v1/ocr \
-  -H 'Authorization: Bearer dev-secret-change-me' \
-  -H 'Content-Type: image/png' \
-  -H 'X-Device-Id: manual-test' \
-  --data-binary @screenshot.png
+jq . /tmp/screen-ocr-last.json
+cat /tmp/screen-ocr-last.err
 ```
 
-Example response:
+## Wayland note
 
-```json
-{
-  "request_id": "9b892dd2-7c14-49e4-89ab-cbc3f85dd165",
-  "device_id": "desktop-one",
-  "text": "Recognized text",
-  "elapsed_ms": 241,
-  "image_sha256": "...",
-  "image_saved_to": "./received/9b892dd2-7c14-49e4-89ab-cbc3f85dd165.png",
-  "text_saved_to": "./received/9b892dd2-7c14-49e4-89ab-cbc3f85dd165.txt"
-}
-```
-
-## OCR tuning
-
-Useful Tesseract page segmentation modes:
-
-- `psm = 3`: automatic page segmentation.
-- `psm = 6`: one uniform block of text; a good default for app windows.
-- `psm = 11`: sparse text scattered across the screen.
-- `psm = 13`: one raw text line.
-
-For small UI text, crop the region before sending. It reduces network traffic and generally improves OCR accuracy.
-
-## Notes
-
-- Wayland may show a portal permission dialog, depending on compositor and desktop environment.
-- macOS requires Screen Recording permission for the sender.
-- Windows may require allowing the receiver through Windows Firewall on private networks.
-- The bearer token authenticates requests but does not encrypt the image. Use a VPN or TLS when the network is not trusted.
+The focused-window lookup and capture use XCap's `Window::all`, `Window::is_focused`, and `Window::capture_image` APIs. XCap marks Wayland window capture as available but not fully supported in every scenario. On a `dwl` setup, the sender must be launched from the same user and graphical session. Depending on the installed portal/PipeWire stack, the compositor may display a permission dialog or reject window capture.

@@ -9,8 +9,15 @@ use serde::Deserialize;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct SenderConfig {
+    pub trigger: TriggerConfig,
     pub server: ServerConfig,
     pub capture: CaptureConfig,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct TriggerConfig {
+    #[serde(default = "default_trigger_bind")]
+    pub bind: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -24,26 +31,6 @@ pub struct ServerConfig {
 #[derive(Debug, Clone, Deserialize)]
 pub struct CaptureConfig {
     pub device_id: String,
-    pub monitor_index: Option<usize>,
-    #[serde(default = "default_true")]
-    pub prefer_primary: bool,
-    #[serde(default = "default_format")]
-    pub format: String,
-    #[serde(default = "default_jpeg_quality")]
-    pub jpeg_quality: u8,
-    pub region: Option<CaptureRegion>,
-    #[serde(default = "default_interval_ms")]
-    pub interval_ms: u64,
-    #[serde(default)]
-    pub send_unchanged: bool,
-}
-
-#[derive(Debug, Clone, Copy, Deserialize)]
-pub struct CaptureRegion {
-    pub x: i32,
-    pub y: i32,
-    pub width: u32,
-    pub height: u32,
 }
 
 impl SenderConfig {
@@ -65,22 +52,10 @@ impl ServerConfig {
     }
 }
 
-fn default_true() -> bool {
-    true
+fn default_trigger_bind() -> String {
+    "127.0.0.1:4490".to_owned()
 }
 
 fn default_timeout_secs() -> u64 {
     30
-}
-
-fn default_format() -> String {
-    "png".to_owned()
-}
-
-fn default_jpeg_quality() -> u8 {
-    90
-}
-
-fn default_interval_ms() -> u64 {
-    1_000
 }

@@ -1,106 +1,53 @@
 mod capture;
 mod client;
 mod config;
+mod server;
 
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 
-use anyhow::Result;
-use clap::{Parser, Subcommand};
-use tracing::{info, warn};
+use anyhow::{Context, Result};
+use clap::Parser;
+use tokio::net::TcpListener;
+use tracing::info;
 use tracing_subscriber::EnvFilter;
 
-use crate::{client::OcrClient, config::SenderConfig};
+use crate::{client::OcrClient, config::SenderConfig, server::AppState};
 
 #[derive(Debug, Parser)]
 #[command(name = "screen-ocr-sender")]
-#[command(about = "Capture a screen and send it to a remote OCR receiver")]
+#[command(about = "Expose a local trigger that captures the focused window and sends it to OCR")]
 struct Cli {
     #[arg(long, default_value = "config.sender.toml")]
     config: PathBuf,
-
-    #[command(subcommand)]
-    command: Command,
-}
-
-#[derive(Debug, Subcommand)]
-enum Command {
-    /// Print available monitors and their indexes.
-    ListMonitors,
-    /// Capture and send one screenshot.
-    Once,
-    /// Capture continuously and send changed frames.
-    Watch,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     init_tracing();
+
     let cli = Cli::parse();
-
-    if matches!(cli.command, Command::ListMonitors) {
-        return capture::list_monitors();
-    }
-
     let config = SenderConfig::load(&cli.config)?;
     let client = OcrClient::new(config.clone())?;
+    let bind = config.trigger.bind.clone();
 
-    match cli.command {
-        Command::ListMonitors => unreachable!(),
-        Command::Once => send_once(&client, &config).await?,
-        Command::Watch => watch(client, config).await?,
-    }
+    let state = Arc::new(AppState { config, client });
+    let listener = TcpListener::bind(&bind)
+        .await
+        .with_context(|| format!("failed to bind sender trigger server to {bind}"))?;
+
+    info!(%bind, "sender trigger server is listening");
+
+    axum::serve(listener, server::router(state))
+        .with_graceful_shutdown(shutdown_signal())
+        .await
+        .context("sender trigger server failed")?;
 
     Ok(())
 }
 
-async fn send_once(client: &OcrClient, config: &SenderConfig) -> Result<()> {
-    let frame = capture::capture(&config.capture)?;
-    info!(
-        width = frame.width,
-        height = frame.height,
-        bytes = frame.bytes.len(),
-        sha256 = %frame.sha256,
-        "captured screenshot"
-    );
-
-    let response = client.send(frame).await?;
-    println!("{}", serde_json::to_string_pretty(&response)?);
-    Ok(())
-}
-
-async fn watch(client: OcrClient, config: SenderConfig) -> Result<()> {
-    let mut previous_hash: Option<String> = None;
-    let mut interval = tokio::time::interval(std::time::Duration::from_millis(
-        config.capture.interval_ms.max(50),
-    ));
-
-    loop {
-        tokio::select! {
-            _ = tokio::signal::ctrl_c() => {
-                info!("stopping sender");
-                return Ok(());
-            }
-            _ = interval.tick() => {
-                match capture::capture(&config.capture) {
-                    Ok(frame) => {
-                        if !config.capture.send_unchanged
-                            && previous_hash.as_deref() == Some(frame.sha256.as_str())
-                        {
-                            continue;
-                        }
-
-                        previous_hash = Some(frame.sha256.clone());
-                        match client.send(frame).await {
-                            Ok(response) => {
-                                println!("{}", serde_json::to_string(&response)?);
-                            }
-                            Err(error) => warn!(%error, "failed to send frame"),
-                        }
-                    }
-                    Err(error) => warn!(%error, "failed to capture frame"),
-                }
-            }
-        }
+async fn shutdown_signal() {
+    if let Err(error) = tokio::signal::ctrl_c().await {
+        tracing::error!(%error, "failed to install Ctrl-C handler");
     }
 }
 

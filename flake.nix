@@ -27,6 +27,8 @@
             libGL
             libglvnd
             mesa
+            libgbm  # Add this - provides GBM library
+            wayland-protocols  # Add this - often needed for wayland capture
             xorg.libxcb
             xorg.libXrandr
           ];
@@ -35,6 +37,8 @@
             packages = nativeInputs ++ runtimeInputs;
             LIBCLANG_PATH = "${pkgs.libclang.lib}/lib";
             LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath runtimeInputs;
+            # Add explicit library paths for pkg-config
+            PKG_CONFIG_PATH = pkgs.lib.makeSearchPathOutput "dev" "lib/pkgconfig" runtimeInputs;
             RUST_LOG = "info";
           };
         });

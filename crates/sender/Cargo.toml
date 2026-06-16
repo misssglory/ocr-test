@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 screen-ocr-common = { path = "../common" }
 anyhow.workspace = true
+axum.workspace = true
 clap.workspace = true
 figment.workspace = true
 hex.workspace = true

@@ -7,6 +7,7 @@ use screen_ocr_common::{
 
 use crate::{capture::CapturedFrame, config::SenderConfig};
 
+#[derive(Clone)]
 pub struct OcrClient {
     http: Client,
     config: SenderConfig,
@@ -35,7 +36,7 @@ impl OcrClient {
             .body(frame.bytes)
             .send()
             .await
-            .context("failed to send screenshot to OCR receiver")?;
+            .context("failed to send focused-window screenshot to OCR receiver")?;
 
         let status = response.status();
         let body = response
