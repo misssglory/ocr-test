@@ -30,56 +30,96 @@
               ];
             };
 
-          screenOcr = pkgs.rustPlatform.buildRustPackage {
-            pname = "screen-ocr";
-            version = "0.2.0";
+      screenOcr = pkgs.rustPlatform.buildRustPackage {
+        pname = "screen-ocr";
+        version = "0.2.0";
 
-            src = ./.;
+        src = ./.;
 
-            cargoLock.lockFile = ./Cargo.lock;
+        cargoLock.lockFile = ./Cargo.lock;
 
-            cargoBuildFlags = [
-              "--workspace"
-            ];
+        cargoBuildFlags = [
+          "--workspace"
+        ];
 
-            nativeBuildInputs = with pkgs; [
-              pkg-config
-              clang
-              cmake
-            ];
+        nativeBuildInputs = with pkgs; [
+          pkg-config
+          clang
+          cmake
+          findutils
+        ];
 
-            buildInputs = with pkgs; [
-              dbus
-              pipewire
-              wayland
-              wayland-protocols
-              libxkbcommon
+        buildInputs = with pkgs; [
+          dbus
+          pipewire
+          wayland
+          wayland-protocols
+          libxkbcommon
 
-              libGL
-              libglvnd
-              mesa
+          libGL
+          libglvnd
+          mesa
 
-              xorg.libxcb
-              xorg.libXrandr
-            ];
+          xorg.libxcb
+          xorg.libXrandr
+        ];
 
-            LIBCLANG_PATH =
-              "${pkgs.libclang.lib}/lib";
+        LIBCLANG_PATH =
+          "${pkgs.libclang.lib}/lib";
 
-            installPhase = ''
-              runHook preInstall
+        installPhase = ''
+          runHook preInstall
 
-              mkdir -p "$out/bin"
+          mkdir -p "$out/bin"
 
-              cp target/release/screen-ocr-sender \
-                "$out/bin/screen-ocr-sender"
+          sender="$(
+            find target \
+              -type f \
+              -path '*/release/screen-ocr-sender' \
+              -print \
+              -quit
+          )"
 
-              cp target/release/screen-ocr-receiver \
-                "$out/bin/screen-ocr-receiver"
+          receiver="$(
+            find target \
+              -type f \
+              -path '*/release/screen-ocr-receiver' \
+              -print \
+              -quit
+          )"
 
-              runHook postInstall
-            '';
-          };
+          if [ -z "$sender" ]; then
+            echo "ERROR: screen-ocr-sender binary not found"
+            echo
+            echo "Contents of target/:"
+            find target -maxdepth 4 -type f -print
+            exit 1
+          fi
+
+          if [ -z "$receiver" ]; then
+            echo "ERROR: screen-ocr-receiver binary not found"
+            echo
+            echo "Contents of target/:"
+            find target -maxdepth 4 -type f -print
+            exit 1
+          fi
+
+          echo "Installing sender from: $sender"
+          echo "Installing receiver from: $receiver"
+
+          install \
+            -Dm755 \
+            "$sender" \
+            "$out/bin/screen-ocr-sender"
+
+          install \
+            -Dm755 \
+            "$receiver" \
+            "$out/bin/screen-ocr-receiver"
+
+          runHook postInstall
+        '';
+      };
 
           screenOcrWorker =
             pkgs.writeShellApplication {
