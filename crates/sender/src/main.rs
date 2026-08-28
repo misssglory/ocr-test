@@ -16,7 +16,7 @@ use crate::{client::TextClient, config::SenderConfig, server::AppState};
 
 #[derive(Debug, Parser)]
 #[command(name = "screen-ocr-sender")]
-#[command(about = "Capture the full screen, run local Tesseract OCR, and send only text")]
+#[command(about = "Select a Wayland region with slurp, capture with grim, run local Tesseract OCR, and send only text")]
 struct Cli {
     #[arg(long, default_value = "config.sender.toml")]
     config: PathBuf,

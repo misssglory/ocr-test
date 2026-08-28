@@ -8,10 +8,12 @@ timeout_secs = 30
 
 [capture]
 device_id = "dwl-desktop"
+slurp_command = "slurp"
+grim_command = "grim"
 
 [ocr]
 command = "tesseract"
-languages = "eng"
+languages = "eng+rus"
 psm = 6
 oem = 1
 timeout_secs = 30

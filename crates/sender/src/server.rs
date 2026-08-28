@@ -27,33 +27,38 @@ pub fn router(state: Arc<AppState>) -> Router {
 async fn capture_ocr_and_send(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<TextReceipt>, ApiError> {
-    let frame = tokio::task::spawn_blocking(capture::capture_full_screen)
+    let frame = capture::capture_selected_region(&state.config.capture)
         .await
-        .map_err(|error| ApiError::internal(format!("capture task failed: {error}")))?
-        .map_err(|error| ApiError::internal(error.to_string()))?;
+        .map_err(|error| {
+            let message = error.to_string();
+            if message.contains("selection cancelled") {
+                ApiError::conflict(message)
+            } else {
+                ApiError::internal(message)
+            }
+        })?;
 
     let started = Instant::now();
-    let image = Arc::new(frame.bytes);
-    let text = ocr::extract_text(&state.config.ocr, image)
+    let text = ocr::extract_text(&state.config.ocr, Arc::new(frame.png))
         .await
         .map_err(|error| ApiError::internal(error.to_string()))?;
     let local_ocr_ms = started.elapsed().as_millis();
 
     info!(
-        monitor = %frame.monitor_name,
+        geometry = %frame.geometry,
         width = frame.width,
         height = frame.height,
         chars = text.chars().count(),
         local_ocr_ms,
         receiver = %state.config.server.url,
-        "captured screen, ran local OCR, sending text"
+        "captured selected region, ran local OCR, sending text"
     );
 
     let submission = TextSubmission {
         device_id: state.config.capture.device_id.clone(),
         text,
         image_sha256: frame.sha256,
-        monitor_name: frame.monitor_name,
+        monitor_name: format!("selected-region:{}", frame.geometry),
         width: frame.width,
         height: frame.height,
         local_ocr_ms,
@@ -79,6 +84,10 @@ impl ApiError {
         Self { status: StatusCode::INTERNAL_SERVER_ERROR, message: message.into() }
     }
 
+    fn conflict(message: impl Into<String>) -> Self {
+        Self { status: StatusCode::CONFLICT, message: message.into() }
+    }
+
     fn bad_gateway(message: impl Into<String>) -> Self {
         Self { status: StatusCode::BAD_GATEWAY, message: message.into() }
     }
@@ -86,6 +95,7 @@ impl ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
+        tracing::error!(status = %self.status, error = %self.message, "capture request failed");
         (self.status, Json(ErrorResponse { error: self.message })).into_response()
     }
 }

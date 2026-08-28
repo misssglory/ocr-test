@@ -1,97 +1,143 @@
-# Screen OCR bridge — client-side Tesseract
+# Screen OCR Region Bridge
 
-The sender captures the full primary monitor, runs Tesseract locally, and sends only recognized UTF-8 text as JSON to the receiver.
+A small Rust workspace for Wayland/NixOS:
 
-## Flow
+1. A local HTTP trigger starts region selection with `slurp`.
+2. `grim` captures only the selected rectangle as PNG to stdout.
+3. The sender runs local Tesseract OCR through stdin/stdout.
+4. Only UTF-8 text and metadata are sent to the remote receiver.
+5. The receiver optionally saves each result as a `.txt` file.
 
-`POST sender:4490/capture -> screenshot -> local Tesseract -> POST receiver:4489/v1/text`
+No screenshot is written to disk or sent over the network.
 
-## Sender requirements
+## Workspace
 
-Install Tesseract and the desired language data. For English and Russian on NixOS, add the relevant Tesseract language packages or use a Tesseract package containing those traineddata files.
+- `screen-ocr-sender`: local trigger, `slurp`, `grim`, Tesseract, HTTP client.
+- `screen-ocr-receiver`: accepts text at `POST /v1/text`.
+- `screen-ocr-common`: shared JSON structures.
 
-Verify:
+## Requirements
 
-```bash
-tesseract --version
-tesseract --list-langs
-```
-
-## Build
+`grim` and `slurp` must be installed system-wide and available in `PATH`.
+The supplied development shell includes Rust, Tesseract, and the requested Wayland libraries.
 
 ```bash
 nix develop
 cargo build --release
 ```
 
-## Run receiver
+Check OCR languages:
+
+```bash
+tesseract --list-langs
+```
+
+If `rus` is unavailable, use `languages = "eng"` or install the Russian trained data system-wide.
+
+## Configuration
+
+Edit `config.sender.toml` and set the receiver IP. The bearer token must match `config.receiver.toml`.
+
+## Start receiver
+
+On the receiving device:
 
 ```bash
 ./target/release/screen-ocr-receiver --config config.receiver.toml
 ```
 
-Check it:
+Health check:
 
 ```bash
-curl http://127.0.0.1:4489/healthz
+curl -sS http://127.0.0.1:4489/healthz
 ```
 
-## Run sender
+## Start sender
 
-Edit `config.sender.toml` and set the receiver IP, then:
+Run sender inside the same Wayland user session as `dwl`:
 
 ```bash
-./target/release/screen-ocr-sender --config config.sender.toml
+RUST_LOG=info ./target/release/screen-ocr-sender --config config.sender.toml
 ```
 
-Trigger capture:
+It must inherit `WAYLAND_DISPLAY` and `XDG_RUNTIME_DIR`.
+
+## Trigger selection
 
 ```bash
-curl -sS -X POST http://127.0.0.1:4490/capture | jq
+curl -sS -X POST http://127.0.0.1:4490/capture
 ```
 
-For Russian and English:
+After the request, select a rectangle with the mouse. The endpoint waits until selection, capture, OCR, and remote delivery are complete.
 
-```toml
-[ocr]
-languages = "eng+rus"
+Pressing Escape cancels `slurp`; the sender returns HTTP 409 with a JSON error.
+
+For debugging, avoid `curl -f`, because it hides the response body on HTTP errors:
+
+```bash
+curl -sS -w '\nHTTP %{http_code}\n' -X POST http://127.0.0.1:4490/capture
 ```
 
-## dwl binding
+## Direct pipeline test
 
-In `config.h`:
+Verify the external tools before testing Rust:
+
+```bash
+geometry="$(slurp -f '%x,%y %wx%h')" && \
+  grim -g "$geometry" - | \
+  tesseract stdin stdout -l eng+rus --psm 6
+```
+
+## dwl keyboard binding
+
+Add this command definition to `config.h`:
 
 ```c
 static const char *ocrcmd[] = {
-    "sh", "-c",
-    "curl -sS -X POST http://127.0.0.1:4490/capture "
-    ">/tmp/screen-ocr-last.json "
-    "2>/tmp/screen-ocr-last.err",
+    "curl", "-sS", "-X", "POST", "http://127.0.0.1:4490/capture",
     NULL
 };
 ```
 
-Add to `keys[]`:
+Add a key entry to `static const Key keys[]`:
 
 ```c
 { MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_o, spawn, {.v = ocrcmd} },
 ```
 
-Then rebuild and restart dwl.
+This binds `Mod + Shift + O`.
 
-## Direct receiver test
+Rebuild and restart dwl:
 
 ```bash
-curl -sS -X POST http://RECEIVER_IP:4489/v1/text \
-  -H 'Authorization: Bearer dev-secret-change-me' \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "device_id":"test",
-    "text":"hello",
-    "image_sha256":"manual-test",
-    "monitor_name":"manual",
-    "width":0,
-    "height":0,
-    "local_ocr_ms":0
-  }' | jq
+make clean
+sudo make install
 ```
+
+The direct `curl` command writes the JSON response to dwl's inherited stdout. If dwl was started from a TTY, the response appears there. For persistent output, use a wrapper script or shell command that redirects stdout to a file.
+
+## API
+
+### Sender
+
+`POST http://127.0.0.1:4490/capture`
+
+### Receiver
+
+`POST /v1/text`
+
+```json
+{
+  "device_id": "dwl-desktop",
+  "text": "recognized text",
+  "image_sha256": "...",
+  "monitor_name": "selected-region:100,200 800x600",
+  "width": 800,
+  "height": 600,
+  "local_ocr_ms": 214
+}
+```
+
+## Security
+
+The default transport is plain HTTP and is intended only for a trusted local network. Bind the sender trigger to `127.0.0.1`; do not expose port `4490` to the LAN.

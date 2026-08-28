@@ -32,6 +32,10 @@ pub struct ServerConfig {
 #[derive(Debug, Clone, Deserialize)]
 pub struct CaptureConfig {
     pub device_id: String,
+    #[serde(default = "default_slurp")]
+    pub slurp_command: String,
+    #[serde(default = "default_grim")]
+    pub grim_command: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -75,6 +79,8 @@ impl OcrConfig {
 
 fn default_trigger_bind() -> String { "127.0.0.1:4490".to_owned() }
 fn default_timeout_secs() -> u64 { 30 }
+fn default_slurp() -> String { "slurp".to_owned() }
+fn default_grim() -> String { "grim".to_owned() }
 fn default_tesseract() -> String { "tesseract".to_owned() }
 fn default_languages() -> String { "eng".to_owned() }
 fn default_psm() -> u8 { 6 }

@@ -1,52 +1,85 @@
-use std::io::Cursor;
+use std::process::Stdio;
 
 use anyhow::{Context, Result, bail};
-use image::{DynamicImage, ImageFormat};
 use sha2::{Digest, Sha256};
-use xcap::Monitor;
+use tokio::process::Command;
 
-pub struct CapturedFrame {
-    pub bytes: Vec<u8>,
+use crate::config::CaptureConfig;
+
+#[derive(Debug)]
+pub struct CapturedRegion {
+    pub png: Vec<u8>,
     pub sha256: String,
+    pub geometry: String,
     pub width: u32,
     pub height: u32,
-    pub monitor_name: String,
 }
 
-pub fn capture_full_screen() -> Result<CapturedFrame> {
-    let monitors = Monitor::all().context("failed to enumerate monitors")?;
-    if monitors.is_empty() {
-        bail!("xcap found no monitors");
+pub async fn capture_selected_region(config: &CaptureConfig) -> Result<CapturedRegion> {
+    let slurp = Command::new(&config.slurp_command)
+        .args(["-f", "%x,%y %wx%h"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .with_context(|| format!("failed to start {}", config.slurp_command))?;
+
+    if !slurp.status.success() {
+        let stderr = String::from_utf8_lossy(&slurp.stderr).trim().to_owned();
+        bail!("region selection cancelled or slurp failed: {stderr}");
     }
 
-    let monitor = monitors
-        .iter()
-        .find(|monitor| monitor.is_primary().unwrap_or(false))
-        .unwrap_or(&monitors[0]);
+    let geometry = String::from_utf8(slurp.stdout)
+        .context("slurp returned non-UTF-8 geometry")?
+        .trim()
+        .to_owned();
 
-    let monitor_name = monitor
-        .name()
-        .unwrap_or_else(|_| "unknown-monitor".to_owned());
+    let (width, height) = parse_geometry(&geometry)?;
 
-    let image = monitor
-        .capture_image()
-        .with_context(|| format!("failed to capture monitor {monitor_name}"))?;
+    let grim = Command::new(&config.grim_command)
+        .args(["-g", &geometry, "-"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .with_context(|| format!("failed to start {}", config.grim_command))?;
 
-    let width = image.width();
-    let height = image.height();
-    let mut bytes = Vec::new();
+    if !grim.status.success() {
+        let stderr = String::from_utf8_lossy(&grim.stderr).trim().to_owned();
+        bail!("grim failed to capture selected region: {stderr}");
+    }
 
-    DynamicImage::ImageRgba8(image)
-        .write_to(&mut Cursor::new(&mut bytes), ImageFormat::Png)
-        .context("failed to encode screenshot as PNG")?;
+    if grim.stdout.is_empty() {
+        bail!("grim returned an empty PNG");
+    }
 
-    let sha256 = hex::encode(Sha256::digest(&bytes));
+    let sha256 = hex::encode(Sha256::digest(&grim.stdout));
 
-    Ok(CapturedFrame {
-        bytes,
+    Ok(CapturedRegion {
+        png: grim.stdout,
         sha256,
+        geometry,
         width,
         height,
-        monitor_name,
     })
+}
+
+fn parse_geometry(geometry: &str) -> Result<(u32, u32)> {
+    let (_, size) = geometry
+        .split_once(' ')
+        .with_context(|| format!("invalid slurp geometry {geometry:?}"))?;
+    let (width, height) = size
+        .split_once('x')
+        .with_context(|| format!("invalid slurp size {size:?}"))?;
+
+    let width: u32 = width.parse().context("invalid selected width")?;
+    let height: u32 = height.parse().context("invalid selected height")?;
+
+    if width == 0 || height == 0 {
+        bail!("selected region has zero size");
+    }
+
+    Ok((width, height))
 }
